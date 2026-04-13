@@ -1,4 +1,4 @@
-# Runge's Phenomenon Audio Demonstration
+# ECE 454: Signal Interpolation
 
 This project demonstrates **Runge's phenomenon** through audio synthesis. It compares different polynomial interpolation methods by generating and comparing audio waveforms created using:
 
