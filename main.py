@@ -1,58 +1,90 @@
 import numpy as np
-from scipy.interpolate import BarycentricInterpolator
+from scipy.signal import resample
 from scipy.io import wavfile
+import matplotlib.pyplot as plt
 
 # --- Audio Settings ---
-sample_rate = 44100
-freq = 441          # 441 Hz gives us exactly 100 samples per cycle
-duration = 2.0      # Length of the audio in seconds
-samples_per_cycle = int(sample_rate / freq) 
-num_cycles = int(freq * duration) 
+sample_rate_high = 44100  # Target high-resolution sample rate
+sample_rate_low = 8000    # Low resolution (Must be > 2 * highest frequency for Nyquist)
+duration = 2.0            # Length of the audio in seconds
 
-# 1. Define the base x interval for one single cycle of the soundwave
-x_cycle = np.linspace(-1, 1, samples_per_cycle)
+# --- Bandpass Signal Parameters ---
+# Carrier frequency (the high "bandpass" part): 3000 Hz
+# Modulator frequency (the low-frequency envelope): 5 Hz
+f_carrier = 3000
+f_mod = 5
 
-# 2. Generate the True Signal Cycle
-y_true_cycle = 1 / (1 + 25 * x_cycle**2)
+# 1. Generate the Time Arrays
+t_high = np.linspace(0, duration, int(sample_rate_high * duration), endpoint=False)
+t_low = np.linspace(0, duration, int(sample_rate_low * duration), endpoint=False)
 
-# 3. Create low-resolution samples (11 points) to simulate a poorly sampled wave
-x_low = np.linspace(-1, 1, 11)
-y_low = 1 / (1 + 25 * x_low**2)
+# 2. Generate the True High-Resolution Signal
+envelope_high = 1 + np.sin(2 * np.pi * f_mod * t_high)
+wave_true = envelope_high * np.sin(2 * np.pi * f_carrier * t_high)
 
-# 4. Interpolate the cycles
-# Linear Interpolation (Choppy but stable)
-y_lin_cycle = np.interp(x_cycle, x_low, y_low)
+# 3. Generate the Low-Resolution "Sampled" Signal
+envelope_low = 1 + np.sin(2 * np.pi * f_mod * t_low)
+wave_low = envelope_low * np.sin(2 * np.pi * f_carrier * t_low)
 
-# Polynomial Interpolation (Produces Runge's Phenomenon)
-poly_interpolator = BarycentricInterpolator(x_low, y_low)
-y_poly_cycle = poly_interpolator(x_cycle)
+# 4. Interpolate the low-resolution signal back to high-resolution
+# Method A: Linear Interpolation (Choppy, straight lines)
+wave_lin = np.interp(t_high, t_low, wave_low)
 
-# 5. Build full 2-second audio waves by repeating the single cycles
-wave_true = np.tile(y_true_cycle, num_cycles)
-wave_lin = np.tile(y_lin_cycle, num_cycles)
-wave_poly = np.tile(y_poly_cycle, num_cycles)
+# Method B: Fourier (Ideal Bandlimited) Interpolation
+wave_ideal = resample(wave_low, len(t_high))
 
-# 6. Helper function to normalize and save as 16-bit PCM WAV
+# 5. Helper function to normalize and save as 16-bit PCM WAV
 def save_wav(filename, wave_data):
-    # Remove DC offset (center the wave)
     wave_data = wave_data - np.mean(wave_data) 
-    
-    # Normalize volume to prevent speakers from blowing out, 
-    # especially needed for the massive spikes in wave_poly
     max_val = np.max(np.abs(wave_data))
     if max_val > 0:
         wave_data = wave_data / max_val
-        
-    # Convert to 16-bit audio format
     wave_data_int16 = np.int16(wave_data * 32767)
-    
-    # Save the file
-    wavfile.write(filename, sample_rate, wave_data_int16)
+    wavfile.write(filename, sample_rate_high, wave_data_int16)
     print(f"Saved: {filename}")
 
-# --- Generate the Files ---
-print("Generating audio files...")
-save_wav("runge_true.wav", wave_true)
-save_wav("runge_linear.wav", wave_lin)
-save_wav("runge_poly.wav", wave_poly)
+# --- Generate the Audio Files ---
+print("Generating bandpass audio files...")
+save_wav("bandpass_true.wav", wave_true)
+save_wav("bandpass_linear.wav", wave_lin)
+save_wav("bandpass_ideal.wav", wave_ideal)
+
+# --- Generate the Plot ---
+print("Generating visual plot...")
+plt.figure(figsize=(12, 8))
+
+# Zoom in on the first 5 milliseconds to actually see the waves
+zoom_start = 0.0
+zoom_end = 0.005
+
+# Subplot 1: True Signal vs Points
+plt.subplot(3, 1, 1)
+plt.plot(t_high, wave_true, label='True Signal (44.1 kHz)', color='black', alpha=0.7)
+plt.scatter(t_low, wave_low, label='Sampled Points (8 kHz)', color='red', zorder=5)
+plt.xlim(zoom_start, zoom_end)
+plt.title('True Signal vs Low-Resolution Samples')
+plt.legend(loc='upper right')
+
+# Subplot 2: Linear Interpolation
+plt.subplot(3, 1, 2)
+plt.plot(t_high, wave_true, label='True Signal', color='black', alpha=0.3)
+plt.plot(t_high, wave_lin, label='Linear Interpolation', color='orange', linestyle='--')
+plt.scatter(t_low, wave_low, color='red', zorder=5)
+plt.xlim(zoom_start, zoom_end)
+plt.title('Linear Interpolation (Notice the sharp, jagged edges)')
+plt.legend(loc='upper right')
+
+# Subplot 3: Ideal Interpolation
+plt.subplot(3, 1, 3)
+plt.plot(t_high, wave_true, label='True Signal', color='black', alpha=0.3, linewidth=4)
+plt.plot(t_high, wave_ideal, label='Ideal (FFT) Interpolation', color='green', linestyle='--')
+plt.scatter(t_low, wave_low, color='red', zorder=5)
+plt.xlim(zoom_start, zoom_end)
+plt.title('Ideal Bandlimited Interpolation (Perfectly tracks the true curve)')
+plt.legend(loc='upper right')
+plt.xlabel('Time (seconds)')
+
+plt.tight_layout()
+plt.savefig("bandpass_comparison.png")
+print("Saved: bandpass_comparison.png")
 print("Done!")
